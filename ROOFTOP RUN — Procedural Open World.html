@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>ROOFTOP RUN — Open World Parkour</title>
+    <style>
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #9bc5d8; font-family: system-ui, sans-serif }
+        #hud { position: fixed; inset: 0; pointer-events: none; color: white; text-shadow: 0 2px 5px #14212a }
+        #brand { position: absolute; top: 22px; left: 26px; font-weight: 900; letter-spacing: .18em; font-size: 14px }
+        #stats { position: absolute; top: 22px; right: 26px; text-align: right; font-size: 12px; line-height: 1.7 }
+        #center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 25px; font-weight: 300 }
+        #hint { position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%); font-size: 13px; text-align: center; line-height: 1.8; background: #101d2a66; padding: 10px 18px; border: 1px solid #ffffff35; border-radius: 4px; white-space: nowrap }
+        #mm { position: absolute; left: 26px; bottom: 25px; width: 168px; height: 168px; border: 1px solid #ffffff40; border-radius: 4px }
+        #start { position: fixed; inset: 0; background: linear-gradient(120deg, #132b3deF, #263c4acc); display: grid; place-items: center; color: white; text-align: center; cursor: pointer }
+        #panel { max-width: 600px; padding: 32px }
+        #panel h1 { font-size: clamp(34px, 7vw, 64px); letter-spacing: .12em; margin: 0 0 8px }
+        #panel p { line-height: 1.8; color: #d3e2e8 }
+        #panel button { margin-top: 18px; border: 0; background: #f15b42; color: white; padding: 15px 28px; font-weight: 800; letter-spacing: .12em; cursor: pointer }
+        #help { font-size: 12px; color: #afc4ce }
+    </style>
+</head>
+
+<body>
+    <div id="hud">
+        <div id="brand">ROOFTOP RUN <span style="color:#ff755c">/ OPEN WORLD</span></div>
+        <div id="stats">SPEED <b id="speed">0.0</b><br>MODE <b id="mode">WALK</b><br>ALT <b id="alt">0</b> m<br>DISTANCE <b id="dist">0</b> m<br>BIOME <b id="biome">-</b><br>CHUNK <b id="chunk">0, 0</b><br>SEED <b id="seed">0</b></div>
+        <div id="center">+</div>
+        <canvas id="mm" width="168" height="168"></canvas>
+        <div id="hint">W A S D 이동　·　SHIFT 달리기　·　C 앉기 / SHIFT+C 슬라이딩　·　SPACE 점프 / 벽·턱 앞 Vault　·　R 리스폰　·　N 새 월드(랜덤 시드)<br>공중에서 벽 옆 W = 벽달리기　·　벽달리기 중 SPACE = 월점프　·　착지 직전 C = 롤　·　빨간 구조물 = 러너 비전</div>
+    </div>
+    <div id="start">
+        <div id="panel">
+            <h1>ROOFTOP RUN</h1>
+            <div style="letter-spacing:.3em;color:#ff927b">CITY IS YOUR PLAYGROUND</div>
+            <p>끝없이 이어진 서양식 도심 옥상을 달리는 1인칭 파쿠르.<br>건물 사이를 뛰어넘고, 계단과 다리를 건너 도시 전체를 누벼보세요.</p>
+            <div id="help">마우스 시점 조작 (포인터 잠금이 막히면 드래그로 시점 이동)</div><button>클릭해서 시작</button>
+        </div>
+    </div>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+        const scene = new THREE.Scene(); scene.background = new THREE.Color(0x9bc5d8); scene.fog = new THREE.Fog(0x9bc5d8, 70, 270);
+        const camera = new THREE.PerspectiveCamera(76, innerWidth / innerHeight, .1, 500);
+        const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15; document.body.appendChild(renderer.domElement);
+        scene.add(new THREE.HemisphereLight(0xe5f5ff, 0x59616c, 2.0));
+        const sun = new THREE.DirectionalLight(0xffe1bf, 3.1); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -.0004;
+        Object.assign(sun.shadow.camera, { left: -80, right: 80, top: 80, bottom: -80, near: 1, far: 280 }); sun.shadow.camera.updateProjectionMatrix(); scene.add(sun, sun.target);
+        const SUN_OFF = new THREE.Vector3(-35, 55, 25);
+
+        const mat = (c, r = .8, m = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
+        const roofM = mat(0x454d55), cream = mat(0xc9bba4), dark = mat(0x29343c, .5), metal = mat(0x8b989e, .35, .65), red = new THREE.MeshStandardMaterial({ color: 0xe23a2b, emissive: 0x4a0d06, roughness: .6 }), brick = mat(0x9b7969), wood = mat(0x8a6a48),
+            glass = new THREE.MeshStandardMaterial({ color: 0x5c8291, roughness: .18, metalness: .55 }),
+            sign = new THREE.MeshStandardMaterial({ color: 0xf2d16b, emissive: 0x6b4a10, roughness: .6 }),
+            lamp = new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0xff1a10, emissiveIntensity: 2 });
+        const WORLD = { seed: 0 }; let rnd = () => .5;
+        const ihash = (...v) => { let h = 0x9e3779b9; for (const x of v) { h = Math.imul(h ^ (x | 0), 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16 } return h >>> 0 };
+        const makeRng = s => () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 };
+        const lat = (x, y, s) => ihash(WORLD.seed, x, y, s) / 2147483648 - 1;
+        const vn = (x, y, s) => { const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), a = lat(ix, iy, s), b = lat(ix + 1, iy, s), c = lat(ix, iy + 1, s), d = lat(ix + 1, iy + 1, s); return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v };
+
+        // 청크 단위 월드: 충돌체는 16m 격자에 등록/해제, 지오메트리는 청크마다 재질별로 병합
+        const grid = new Map(), CELL = 16, EMPTY = [], chunks = new Map(), matteMap = new Map(); let CH = null;
+        const MATTE = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .85 }); // 무광 재질(크림·나무·잔디…)은 정점 색으로 통합
+        const cellsOf = s => [Math.floor((s.x - s.hx - 2) / CELL), Math.floor((s.x + s.hx + 2) / CELL), Math.floor((s.z - s.hz - 2) / CELL), Math.floor((s.z + s.hz + 2) / CELL)];
+        function reg(s) { CH.cols.push(s); const [x0, x1, z0, z1] = cellsOf(s); for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) { const k = i * 65536 + j; let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(s) } }
+        function unreg(s) { const [x0, x1, z0, z1] = cellsOf(s); for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) { const k = i * 65536 + j, a = grid.get(k); if (!a) continue; const n = a.indexOf(s); if (n >= 0) a.splice(n, 1); if (!a.length) grid.delete(k) } }
+        const near = (x, z) => grid.get(Math.floor(x / CELL) * 65536 + Math.floor(z / CELL)) || EMPTY;
+        const tp = g => ({ pos: g.attributes.position.array, nor: g.attributes.normal.array, idx: g.index.array, n: g.attributes.position.count });
+        const T = { box: tp(new THREE.BoxGeometry(1, 1, 1)), fan: tp(new THREE.CylinderGeometry(.48, .48, .12, 16).rotateX(Math.PI / 2)), vent: tp(new THREE.CylinderGeometry(.28, .35, 1.7, 12)), cap: tp(new THREE.CylinderGeometry(.48, .48, .15, 12)), tank: tp(new THREE.CylinderGeometry(2, 2, 4, 20)), ant: tp(new THREE.CylinderGeometry(.08, .14, 1, 8)), sph: tp(new THREE.SphereGeometry(.2, 8, 8)), pad: tp(new THREE.CylinderGeometry(4.5, 4.5, .06, 32)) };
+        function addGeo(material, shadow, t, x, y, z, sx, sy, sz) {
+            const c = matteMap.get(material), key = c ? 'm' + shadow : material.uuid + shadow; let P = CH.parts.get(key);
+            if (!P) CH.parts.set(key, P = { material: c ? MATTE : material, shadow, pos: [], nor: [], col: c ? [] : null, idx: [], n: 0 });
+            for (let i = 0; i < t.n; i++) {
+                P.pos.push(t.pos[i * 3] * sx + x, t.pos[i * 3 + 1] * sy + y, t.pos[i * 3 + 2] * sz + z);
+                const nx = t.nor[i * 3] / sx, ny = t.nor[i * 3 + 1] / sy, nz = t.nor[i * 3 + 2] / sz, l = Math.hypot(nx, ny, nz) || 1; P.nor.push(nx / l, ny / l, nz / l);
+                if (c) P.col.push(c.r, c.g, c.b);
+            }
+            for (let i = 0; i < t.idx.length; i++) P.idx.push(t.idx[i] + P.n); P.n += t.n;
+        }
+        function box(x, y, z, sx, sy, sz, material, collide = true, shadow = true) {
+            addGeo(material, shadow, T.box, x, y, z, sx, sy, sz);
+            if (collide) reg({ x, z, hx: sx / 2, hz: sz / 2, top: y + sy / 2, bot: y - sy / 2 });
+        }
+        function finish(ch) {
+            for (const P of ch.parts.values()) {
+                const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(P.nor, 3)); if (P.col) g.setAttribute('color', new THREE.Float32BufferAttribute(P.col, 3));
+                g.setIndex(new THREE.BufferAttribute(P.n > 65535 ? new Uint32Array(P.idx) : new Uint16Array(P.idx), 1)); g.computeBoundingSphere();
+                const m = new THREE.Mesh(g, P.material); m.castShadow = P.shadow; m.receiveShadow = true; ch.group.add(m);
+            }
+            ch.parts = null; scene.add(ch.group);
+        }
+        function unload(k, ch) { scene.remove(ch.group); ch.group.traverse(o => o.geometry?.dispose()); for (const c of ch.cols) unreg(c); chunks.delete(k) }
+
+        // ---- 건물 외벽 텍스처 (창문 반복 패턴) ----
+        function facadeTex(wall) {
+            const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+            g.fillStyle = wall; g.fillRect(0, 0, 128, 128); g.fillStyle = 'rgba(0,0,0,.12)'; g.fillRect(0, 118, 128, 10);
+            g.fillStyle = '#d8cdb8'; g.fillRect(22, 100, 84, 6);
+            const gr = g.createLinearGradient(0, 28, 0, 100); gr.addColorStop(0, '#7fa5b5'); gr.addColorStop(1, '#3d5a68'); g.fillStyle = gr; g.fillRect(28, 28, 72, 72);
+            g.strokeStyle = '#d8cdb8'; g.lineWidth = 4; g.strokeRect(28, 28, 72, 72); g.beginPath(); g.moveTo(64, 28); g.lineTo(64, 100); g.stroke();
+            const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+        }
+        function ribbonTex(wall) { // 띠창(커튼월) 외벽
+            const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'); g.fillStyle = wall; g.fillRect(0, 0, 128, 128);
+            const gr = g.createLinearGradient(0, 20, 0, 108); gr.addColorStop(0, '#9cc3d3'); gr.addColorStop(1, '#2f4d5c'); g.fillStyle = gr; g.fillRect(0, 22, 128, 84); g.fillStyle = wall; g.fillRect(0, 22, 4, 84); g.fillRect(62, 22, 4, 84);
+            const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+        }
+        const facades = [facadeTex('#9b7969'), facadeTex('#c9bba4'), facadeTex('#8a9097'), facadeTex('#6e5448'), ribbonTex('#aab4bb'), ribbonTex('#3b4650')];
+        const fmCache = new Map(); // 같은 규격의 외벽 재질은 공유
+        function faceMat(k, wd, H) { const rx = Math.max(1, Math.round(wd / 3.2)), ry = Math.max(1, Math.round(H / 3.2)), key = k * 1e6 + rx * 1e3 + ry; let m = fmCache.get(key); if (!m) { const t = facades[k].clone(); t.needsUpdate = true; t.repeat.set(rx, ry); fmCache.set(key, m = new THREE.MeshStandardMaterial({ map: t, roughness: .85 })) } return m }
+
+        const GROUND = -60;
+        function building(x, z, w, d, top, kind, parapet = true, bot = GROUND) {
+            const H = top - bot, mx = faceMat(kind, d, H), mz = faceMat(kind, w, H), g = new THREE.BoxGeometry(w, H, d);
+            g.clearGroups(); g.addGroup(0, 12, 0); g.addGroup(12, 12, 1); g.addGroup(24, 12, 2);
+            const m = new THREE.Mesh(g, [mx, roofM, mz]); m.position.set(x, top - H / 2, z); m.castShadow = m.receiveShadow = true; CH.group.add(m);
+            reg({ x, z, hx: w / 2, hz: d / 2, top, bot, roof: true });
+            if (parapet) { // 옥상 난간(장식용)
+                box(x, top + .25, z - d / 2 + .09, w, .5, .18, cream, false, false); box(x, top + .25, z + d / 2 - .09, w, .5, .18, cream, false, false);
+                box(x - w / 2 + .09, top + .25, z, .18, .5, d, cream, false, false); box(x + w / 2 - .09, top + .25, z, .18, .5, d, cream, false, false);
+            }
+        }
+
+        // ---- 옥상 오브젝트 ----
+        function hvac(x, y, z, s) {
+            box(x, y + .7, z, 3 * s, 1.4, 2 * s, metal); box(x, y + 1.45, z, 3.2 * s, .12, 2.2 * s, dark, false);
+            for (let i = -1; i <= 1; i += 2) addGeo(dark, false, T.fan, x + i * .8 * s, y + .8, z - 1.03 * s, s, s, 1);
+        }
+        function vent(x, y, z) { addGeo(metal, true, T.vent, x, y + .85, z, 1, 1, 1); addGeo(dark, false, T.cap, x, y + 1.75, z, 1, 1, 1) }
+        function tank(x, y, z) { addGeo(metal, true, T.tank, x, y + 2.7, z, 1, 1, 1); box(x, y + .35, z, 5, .7, 5, dark, false); reg({ x, z, hx: 2.2, hz: 2.2, top: y + 4.7, bot: y }) }
+        function antenna(cx, top, cz, h) { addGeo(metal, true, T.ant, cx, top + h / 2, cz, 1, h, 1); addGeo(lamp, false, T.sph, cx, top + h, cz, 1, 1, 1) }
+        const grass = mat(0x4f7a3c, 1), leaf = mat(0x3f8a4a, 1), water = new THREE.MeshStandardMaterial({ color: 0x3aa0c8, roughness: .1, metalness: .3 }), courtM = mat(0x3a6ea5, .9), white = mat(0xeeeeee), deck = mat(0xb89a6a), soil = mat(0x4a3a2c), sgn = () => rnd() < .5 ? -1 : 1, padM = mat(0x3b444c);
+        for (const m of [cream, wood, grass, leaf, soil, white, deck, courtM, padM]) matteMap.set(m, m.color);
+        // 옥상 테마: 0 기계실+펜트하우스 / 1 정원 / 2 공장 / 3 수영장 / 4 공사장 / 5 농구 코트
+        function theme(th, x, z, w, d, top) {
+            const sx = sgn(), sz = sgn(), cx = x + sx * 10, cz = z + sz * 10;
+            if (th === 0 || th === 4) box(x - sx * 10, top + 1.4, z - sz * 10, 9, 2.8, 8, cream); // 펜트하우스(올라탈 수 있음)
+            if (th === 1) {
+                box(x, top + .03, z, w - 6, .06, d - 6, grass, false, false);
+                for (let k = 0; k < 6; k++) { const px = x + sgn() * (6 + rnd() * (w / 2 - 11)), pz = z + sgn() * (6 + rnd() * (d / 2 - 11)); box(px, top + .9, pz, .6, 1.8, .6, wood); box(px, top + 2.9, pz, 2.6, 2.2, 2.6, leaf, false) }
+                box(cx, top + .4, cz, 6, .8, 1.4, soil);
+            } else if (th === 2) {
+                for (let k = 0; k < 2; k++) box(x + sgn() * (w / 2 - 6), top + 4.5, z + sgn() * (d / 2 - 6), 1.8, 9, 1.8, metal); // 굴뚝(벽달리기)
+                const al = rnd() < .5; box(al ? cx : x + sx * 8, top + .45, al ? z + sz * 8 : cz, al ? 12 : .7, .9, al ? .7 : 12, metal);
+            } else if (th === 3) {
+                box(cx, top + .04, cz, 14, .08, 12, deck, false, false); box(cx, top + .1, cz, 12, .1, 10, water, false, false);
+                for (let k = 0; k < 3; k++) box(x - sx * (6 + k * 3), top + .3, z - sz * 12, 1.8, .6, .7, wood);
+            } else if (th === 4) {
+                for (const [a, b] of [[-3, -2], [3, -2], [-3, 2], [3, 2]]) box(cx + a, top + 3, cz + b, .25, 6, .25, metal, false);
+                box(cx, top + 2.5, cz, 6.4, .3, 4.4, wood); box(cx, top + 5.9, cz, 6.4, .2, .2, red, false); // 높은 작업 발판(Mantle)
+            } else if (th === 5) {
+                box(cx, top + .03, cz, 14, .06, 11, courtM, false, false); box(cx, top + .07, cz, .2, .02, 11, white, false, false); box(cx + 7, top + 1.6, cz, .2, 3.2, .2, dark, false); box(cx + 6.8, top + 3.2, cz, .1, 1.1, 1.6, white, false);
+            }
+        }
+        function decorate(x, z, w, d, top, th = 0) {
+            theme(th, x, z, w, d, top); const n = (th ? 2 : 4) + Math.floor(rnd() * 3);
+            for (let k = 0; k < n; k++) {
+                // 계단/다리가 닿는 십자 축(±5m)은 비워 둠
+                const px = x + (rnd() < .5 ? -1 : 1) * (5.5 + rnd() * (w / 2 - 10)), pz = z + (rnd() < .5 ? -1 : 1) * (5.5 + rnd() * (d / 2 - 10)), r = rnd(), sw = rnd() < .5;
+                if (r < .2) hvac(px, top, pz, .7 + rnd() * .4);
+                else if (r < .36) vent(px, top, pz);
+                else if (r < .5) box(px, top + .5, pz, sw ? 1.1 : 3.4, 1, sw ? 3.4 : 1.1, red);            // 점프용 낮은 벽
+                else if (r < .66) box(px, top + 1.1, pz, sw ? 1.1 : 3.8, 2.2, sw ? 3.8 : 1.1, red);      // Vault용 높은 벽
+                else if (r < .78) { box(px, top + .6, pz, 1.6, 1.2, 1.6, red); box(px + .3, top + 1.6, pz, 1.1, .8, 1.1, red) } // 박스 더미
+                else if (r < .86) { box(px, top + .55, pz, 3.5, 1.1, 4, glass, false); box(px, top + .1, pz, 3.8, .2, 4.3, dark, false) } // 천창
+                else if (r < .92) tank(px, top, pz);
+                else { box(px - 2.4, top + 2, pz, .25, 4, .25, dark, false); box(px + 2.4, top + 2, pz, .25, 4, .25, dark, false); box(px, top + 4.4, pz, 6, 2.6, .3, sign, false) } // 옥상 광고판
+            }
+            if (rnd() < .35) antenna(x + w / 2 - 3, top, z + d / 2 - 3, 8 + rnd() * 8);
+            if (rnd() < .7) { const sx = rnd() < .5 ? -1 : 1, sz = rnd() < .5 ? -1 : 1, al = rnd() < .5; box(x + sx * 10.5, top + 2.1, z + sz * 10.5, al ? 8 : .5, 4.2, al ? .5 : 8, red) }
+            if (rnd() < .25) addGeo(padM, false, T.pad, x - w / 4, top + .03, z - d / 4, 1, 1, 1);
+        }
+
+        // ---- 월드 생성: 시드 + 노이즈 기반 무한 청크 (마인크래프트 방식) ----
+        // 한 청크 = 건물 1동. 모든 값은 (시드, 청크 좌표)의 순수 함수라 언로드 후 다시 만들어도 같은 모습.
+        const PITCH = 46, SIZES = [34, 36, 38, 40], RAD = 6.5, AMP = 14, q = v => Math.round(v * 2) / 2;
+        const DIST = [ // 바이옴: 저주파 노이즈 2개로 구역 결정 → 구역마다 테마·외벽·초고층 확률이 다름
+            { name: 'DOWNTOWN', th: [0, 0, 4, 5, 0], kinds: [4, 5, 2, 4], tower: .13 },
+            { name: 'GARDEN', th: [1, 1, 3, 1, 5], kinds: [0, 1, 3, 1], tower: .03 },
+            { name: 'INDUSTRIAL', th: [2, 2, 4, 2, 0], kinds: [2, 3, 0, 2], tower: .05 },
+            { name: 'RESORT', th: [3, 5, 1, 3, 0], kinds: [1, 4, 0, 1], tower: .07 }];
+        const hraw = (i, j) => .65 * vn(i * .13, j * .13, 1) + .35 * vn(i * .31, j * .31, 2), plotCache = new Map();
+        function plot(i, j) {
+            const key = (i + 1e5) * 200003 + j + 1e5; let p = plotCache.get(key); if (p) return p;
+            const r = makeRng(ihash(WORLD.seed, i, j, 101)), dist = (vn(i * .085 + .5, j * .085 + .5, 11) > 0 ? 1 : 0) + (vn(i * .085 + 9.1, j * .085 - 3.3, 12) > 0 ? 2 : 0), D = DIST[dist], home = i === 0 && j === 0;
+            const w = SIZES[r() * 4 | 0], d = SIZES[r() * 4 | 0], tower = !home && r() < D.tower, h = q(AMP * (hraw(i, j) - hraw(0, 0)));
+            p = { i, j, x: i * PITCH, z: j * PITCH, w, d, dist, tower, top: tower ? h + 22 + r() * 48 : h, kind: D.kinds[r() * D.kinds.length | 0], th: home ? 0 : D.th[r() * D.th.length | 0] };
+            if (plotCache.size > 4000) plotCache.clear(); plotCache.set(key, p); return p;
+        }
+        function genChunk(ci, cj) {
+            const p = plot(ci, cj), ch = { ci, cj, p, cols: [], parts: new Map(), group: new THREE.Group() }; CH = ch; rnd = makeRng(ihash(WORLD.seed, ci, cj, 7));
+            if (p.tower) { building(p.x, p.z, p.w, p.d, p.top, p.kind, false); const t2 = p.top + 6 + rnd() * 14; building(p.x, p.z, p.w * .6, p.d * .6, t2, p.kind, false, p.top); antenna(p.x, t2, p.z, 10 + rnd() * 10) }
+            else {
+                building(p.x, p.z, p.w, p.d, p.top, p.kind); decorate(p.x, p.z, p.w, p.d, p.top, p.th);
+                rnd = makeRng(ihash(WORLD.seed, ci, cj, 13)); const e = plot(ci + 1, cj), s = plot(ci, cj + 1); // 동·남쪽 이웃과의 연결은 이 청크가 담당
+                if (!e.tower) connect(p, e, true); if (!s.tower) connect(p, s, false);
+            }
+            finish(ch); chunks.set(ci + ',' + cj, ch); CH = null;
+        }
+        const queue = []; let lastCi = 1e9, lastCj = 1e9;
+        function streamChunks(budget) { // 플레이어 주변 RAD 청크만 유지: 멀어진 청크는 해제, 가까운 순서로 프레임당 몇 개씩 생성
+            const ci = Math.round(player.pos.x / PITCH), cj = Math.round(player.pos.z / PITCH);
+            if (ci !== lastCi || cj !== lastCj) {
+                lastCi = ci; lastCj = cj; queue.length = 0; const R = Math.ceil(RAD);
+                for (const [k, ch] of chunks) if ((ch.ci - ci) ** 2 + (ch.cj - cj) ** 2 > (RAD + 1.5) ** 2) unload(k, ch);
+                for (let j = cj - R; j <= cj + R; j++) for (let i = ci - R; i <= ci + R; i++) { const d = (i - ci) ** 2 + (j - cj) ** 2; if (d <= RAD * RAD && !chunks.has(i + ',' + j)) queue.push({ i, j, d }) }
+                queue.sort((a, b) => a.d - b.d);
+            }
+            while (budget-- > 0 && queue.length) { const c = queue.shift(); if (!chunks.has(c.i + ',' + c.j)) genChunk(c.i, c.j) }
+        }
+        function newWorld(seed) {
+            WORLD.seed = seed | 0; plotCache.clear(); for (const [k, ch] of chunks) unload(k, ch);
+            player.pos.copy(SPAWN); player.vel.set(0, 0, 0); lastSafe.copy(SPAWN); travel = 0; lastCi = 1e9; ui.seed.textContent = WORLD.seed;
+            streamChunks(25); try { history.replaceState(null, '', '?seed=' + WORLD.seed) } catch (e) { }
+        }
+
+        // 인접 옥상 연결: 높이차 ≤0.5 → 틈(점프) 또는 판자 다리 / 높이차 큼 → 철제 계단
+        function connect(a, b, X) {
+            const ea = X ? a.x + a.w / 2 : a.z + a.d / 2, eb = X ? b.x - b.w / 2 : b.z - b.d / 2, g = eb - ea, dh = Math.abs(a.top - b.top), lo = Math.min(a.top, b.top), hi = Math.max(a.top, b.top), W = 3.6;
+            if (dh <= .5) { if (rnd() < .35) { const m = ea + g / 2, y = lo + .03 - .15; X ? box(m, y, a.z, g, .3, 2.6, red) : box(a.x, y, m, 2.6, .3, g, red) } return }
+            const n = Math.ceil(dh / .4), tread = g / n, fromA = a.top > b.top;
+            for (let k = 0; k < n; k++) {
+                const t = hi - (k + 1) * dh / (n + 1), p = fromA ? ea + (k + .5) * tread : eb - (k + .5) * tread, bot = lo - 2, cy = (t + bot) / 2, sy = t - bot;
+                X ? box(p, cy, a.z, tread, sy, W, red) : box(a.x, cy, p, W, sy, tread, red);
+            }
+        }
+
+
+        // 저 아래 거리
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), mat(0x2d353b)); ground.rotation.x = -Math.PI / 2; ground.position.y = GROUND; ground.receiveShadow = true; scene.add(ground);
+
+        // ---- 미니맵 (로드된 청크를 플레이어 중심으로 그림) ----
+        const mm = document.getElementById('mm'), mg = mm.getContext('2d'), MS = 84 / 110;
+        function drawMap() {
+            mg.clearRect(0, 0, 168, 168); mg.fillStyle = '#10202bcc'; mg.fillRect(0, 0, 168, 168);
+            for (const { p: b } of chunks.values()) {
+                const x = 84 + (b.x - b.w / 2 - player.pos.x) * MS, y = 84 + (b.z - b.d / 2 - player.pos.z) * MS, w = b.w * MS, h = b.d * MS; if (x > 168 || y > 168 || x + w < 0 || y + h < 0) continue;
+                mg.fillStyle = b.tower ? '#dfe9ee' : `hsl(${200 - b.top * 4} 25% ${Math.max(18, Math.min(78, 38 + b.top * 2.2))}%)`; mg.fillRect(x, y, w, h);
+            }
+            const ang = Math.atan2(-Math.cos(player.yaw), -Math.sin(player.yaw));
+            mg.save(); mg.translate(84, 84); mg.rotate(ang); mg.fillStyle = '#ff755c'; mg.beginPath(); mg.moveTo(7, 0); mg.lineTo(-5, 4.5); mg.lineTo(-5, -4.5); mg.closePath(); mg.fill(); mg.restore();
+        }
+
+        // ---- 플레이어 ----
+        const EYE = 1.68, STEP = .55, SPAWN = new THREE.Vector3(0, EYE, 10);
+        const player = { pos: SPAWN.clone(), vel: new THREE.Vector3(), yaw: 0, pitch: 0, grounded: false, slide: 0, crouch: false, vault: 0, vaultStart: null, roll: 0, stun: 0, wr: 0, wrDir: 1, wrLast: null, wrCool: 0, wrSide: 1, wrSp: 13, coyote: 0, mom: 0, dip: 0, bob: 0, rz: 0, dead: false };
+        const lastSafe = SPAWN.clone();
+        camera.position.copy(player.pos);
+        const keys = {}; let locked = false, started = false, travel = 0;
+        const start = document.getElementById('start');
+        start.addEventListener('click', () => {
+            started = true; start.style.display = 'none'; window.focus();
+            try { renderer.domElement.requestPointerLock?.(); } catch (err) { console.warn('Pointer lock unavailable:', err); }
+        });
+        document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === renderer.domElement; if (locked) start.style.display = 'none' });
+        renderer.domElement.addEventListener('click', () => { if (started && !locked) { try { renderer.domElement.requestPointerLock?.() } catch (err) { } } });
+        document.addEventListener('mousemove', e => {
+            if (!locked && !(started && (e.buttons & 1))) return; // 포인터 잠금이 막힌 환경에서는 드래그로 시점 이동
+            player.yaw -= e.movementX * .0022; player.pitch -= e.movementY * .0022; player.pitch = Math.max(-1.35, Math.min(1.35, player.pitch));
+        });
+        // 키 입력: e.code(물리 키 위치) 기준이라 한글 IME/대문자 상태에서도 W,A,S,D 가 동작
+        window.addEventListener('keydown', e => {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            keys[e.code] = true;
+            if (e.code === 'KeyR' && started) respawn();
+            if (e.code === 'KeyN' && started) newWorld(Math.random() * 2 ** 31 | 0);
+            if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+        });
+        window.addEventListener('keyup', e => { keys[e.code] = false });
+        window.addEventListener('blur', () => { for (const k in keys) keys[k] = false });
+        const K = (...c) => c.some(k => keys[k]);
+        function respawn() { player.pos.copy(lastSafe); player.vel.set(0, 0, 0); player.vault = 0; player.vaultStart = null; player.slide = 0; player.roll = 0; player.stun = 0; player.wr = 0; player.dead = false }
+
+        const clock = new THREE.Clock();
+        function hit(nx, nz, feet, rad = .42) {
+            for (const s of near(nx, nz)) {
+                if (Math.abs(nx - s.x) > s.hx + rad || Math.abs(nz - s.z) > s.hz + rad) continue;
+                if (s.top - feet <= STEP || feet + 1.65 < s.bot) continue; // 발밑 0.55m 이하의 턱은 자동으로 오름
+                const cx = Math.max(s.x - s.hx, Math.min(nx, s.x + s.hx)), cz = Math.max(s.z - s.hz, Math.min(nz, s.z + s.hz));
+                if ((nx - cx) ** 2 + (nz - cz) ** 2 < rad * rad) return s;
+            }
+            return null;
+        }
+        function floorAt(x, z, feet, tol) {
+            let best = null;
+            for (const s of near(x, z)) { const m = s.hx > 1 && s.hz > 1 ? .25 : 0; if (Math.abs(x - s.x) < s.hx - m && Math.abs(z - s.z) < s.hz - m && s.top <= feet + tol && (!best || s.top > best.top)) best = s }
+            return best;
+        }
+        // ---- 1인칭 팔다리: 회색 직사각형 + 행동별 포즈, 달리기 보행 주기 ----
+        const gray = new THREE.MeshStandardMaterial({ color: 0x8d9399, roughness: .9, depthTest: false }), ghost = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+        function limb(parent, x, y, z, l1, l2, w) { // 윗마디 + 아랫마디(관절 그룹), 기본 방향은 아래(-y)
+            const root = new THREE.Group(), mid = new THREE.Group(); root.position.set(x, y, z); mid.position.y = -l1; root.add(mid); parent.add(root);
+            for (const [g, l, ww] of [[root, l1, w], [mid, l2, w * .85]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(ww, l, ww), gray); m.position.y = -l / 2; m.castShadow = true; m.renderOrder = 10; g.add(m) }
+            return { root, mid };
+        }
+        scene.add(camera); const body = new THREE.Group(); scene.add(body);
+        const armR = limb(camera, .3, -.32, -.1, .32, .3, .1), armL = limb(camera, -.3, -.32, -.1, .32, .3, .1), legR = limb(body, .15, .92, -.05, .45, .45, .16), legL = limb(body, -.15, .92, -.05, .45, .45, .16);
+        for (const [sx, sy, sz, py, pz] of [[.5, .7, .3, 1.2, .2], [.28, .28, .28, 1.68, .1]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), ghost); m.position.set(0, py, pz); m.castShadow = true; body.add(m) } // 화면엔 안 보이고 그림자만 생김
+        const cur = new Float32Array(10), FW = new THREE.Vector3(), RT = new THREE.Vector3(), MV = new THREE.Vector3(), ui = {}; let gait = 0, hudT = 0;
+        for (const k of ['speed', 'mode', 'alt', 'dist', 'biome', 'chunk', 'seed']) ui[k] = document.getElementById(k);
+        // [R팔 어깨,팔꿈치,좌우 | L팔 어깨,팔꿈치,좌우 | R다리 허벅지,정강이 | L다리 허벅지,정강이]
+        function pose(st, ph, amp, ws) {
+            const s = Math.sin(ph), c = -s, a = 1.2 + .3 * amp;
+            switch (st) {
+                case 'RUN': case 'WALK': return [1.2 + .75 * amp * s, a, 0, 1.2 + .75 * amp * c, a, 0, .9 * amp * c, -(.2 + amp * Math.max(0, s)), .9 * amp * s, -(.2 + amp * Math.max(0, c))];
+                case 'WALLRUN': return [ws > 0 ? .9 : 1.2 + .75 * s, ws > 0 ? .2 : 1.4, ws > 0 ? 1.5 : 0, ws < 0 ? .9 : 1.2 + .75 * c, ws < 0 ? .2 : 1.4, ws < 0 ? -1.5 : 0, .9 * c, -(.3 + Math.max(0, s)), .9 * s, -(.3 + Math.max(0, c))]; // 벽 쪽 팔을 벽으로 뻗음
+                case 'SLIDE': return [.4, .3, .5, .4, .3, -.5, 1.5, -.1, .5, -1.8];
+                case 'ROLL': return [1.6, 1.5, 0, 1.6, 1.5, 0, 1.4, -2, 1.4, -2];
+                case 'VAULT': return [2.3, .4, .3, 2.3, .4, -.3, 1.1, -1.6, 1.1, -1.6];
+                case 'CROUCH': return [1, 1.4, 0, 1, 1.4, 0, 1.3, -2, 1.3, -2];
+                case 'AIR': return [.9, .8, .6, .9, .8, -.6, .8, -.9, -.3, -.4];
+                case 'STUN': return [.3, .4, .2, .3, .4, -.2, .2, -.3, .2, -.3];
+                default: return [1.2 + .04 * s, 1.35, 0, 1.2 - .04 * s, 1.35, 0, 0, 0, 0, 0]; // IDLE: 호흡
+            }
+        }
+        function animLimbs(dt, mode, sh) {
+            gait += dt * (sh * .8 + 1.5); const t = pose(mode, gait, Math.min(1, sh / 16), player.wrSide), k = Math.min(1, dt * 14);
+            for (let i = 0; i < 10; i++) cur[i] += (t[i] - cur[i]) * k;
+            armR.root.rotation.set(cur[0], 0, cur[2]); armR.mid.rotation.x = cur[1]; armL.root.rotation.set(cur[3], 0, cur[5]); armL.mid.rotation.x = cur[4];
+            legR.root.rotation.x = cur[6]; legR.mid.rotation.x = cur[7]; legL.root.rotation.x = cur[8]; legL.mid.rotation.x = cur[9];
+            body.position.set(player.pos.x, player.pos.y - EYE - (mode === 'CROUCH' || mode === 'SLIDE' || mode === 'ROLL' ? .4 : 0), player.pos.z); body.rotation.y = player.yaw;
+        }
+
+        // ---- Mirror's Edge 스타일 이동 시스템 ----
+        let cPress = -1e9; window.addEventListener('keydown', e => { if (e.code === 'KeyC') cPress = performance.now() });
+        const hsOf = () => Math.hypot(player.vel.x, player.vel.z);
+        // 머리 위까지 이어지는 수직 벽을 찾아 법선(nx,nz)을 반환 (벽달리기용)
+        function wallAt(x, z, feet) {
+            let best = null, bd = 1.1;
+            for (const s of near(x, z)) {
+                if (Math.abs(x - s.x) > s.hx + bd || Math.abs(z - s.z) > s.hz + bd) continue;
+                if (s.top - feet < 2.2 || s.bot > feet + .5) continue;
+                const cx = Math.max(s.x - s.hx, Math.min(x, s.x + s.hx)), cz = Math.max(s.z - s.hz, Math.min(z, s.z + s.hz)), dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz);
+                if (d > .01 && d < bd) { bd = d; best = { s, nx: dx / d, nz: dz / d } }
+            }
+            return best;
+        }
+        // Vault(얇은 벽 넘기, 속도 유지) / Mantle(난간 잡고 올라타기). 공중 난간 잡기는 lo·maxT·hi 를 바꿔 재사용
+        function tryVault(lo = 1.3, maxT = 1.3, hi = 3.2) {
+            const feet = player.pos.y - EYE, dx = -Math.sin(player.yaw), dz = -Math.cos(player.yaw); let best = null;
+            for (const s of near(player.pos.x, player.pos.z)) {
+                const h = s.top - feet; if (h < lo || h > hi || feet + 1.65 < s.bot) continue;
+                let tin = null, tout = null;
+                for (let t = .3; t <= 4.4; t += .15) {
+                    const px = player.pos.x + dx * t, pz = player.pos.z + dz * t, inside = Math.abs(px - s.x) < s.hx + .3 && Math.abs(pz - s.z) < s.hz + .3;
+                    if (inside && tin === null) tin = t; if (!inside && tin !== null) { tout = t; break }
+                }
+                if (tin === null || tin > maxT) continue; if (!best || tin < best.tin) best = { s, tin, tout };
+            }
+            if (!best) return false;
+            const thin = best.tout !== null && best.tout - best.tin < 3.4, t = thin ? best.tout + .8 : best.tin + 1.1, y = thin ? best.s.top + .95 : best.s.top + EYE + .02, k = thin ? .9 : .55;
+            player.vault = .62; player.vaultStart = { x: player.pos.x, z: player.pos.z, tx: player.pos.x + dx * t, tz: player.pos.z + dz * t, y, vx: player.vel.x * k, vz: player.vel.z * k };
+            player.vel.set(0, 0, 0); player.wr = 0; return true;
+        }
+        // 착지 충격: 일반 착지 흔들림 / 큰 충격은 롤(C)로 상쇄, 못 하면 스턴, 너무 높으면 사망
+        function land(v) {
+            player.dip = Math.min(.45, v * .018);
+            if (v > 31) { player.dead = true; return }
+            if (v > 14) { if (performance.now() - cPress < 350 || keys.KeyC) player.roll = .55; else { player.stun = v > 22 ? 1 : .6; player.vel.x *= .25; player.vel.z *= .25; player.mom = 0 } }
+        }
+
+        function update(dt) {
+            streamChunks(3);
+            const forward = FW.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)), right = RT.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+            const fw = K('KeyW', 'ArrowUp'), ix = (K('KeyD', 'ArrowRight') ? 1 : 0) - (K('KeyA', 'ArrowLeft') ? 1 : 0), iz = (K('KeyS', 'ArrowDown') ? 1 : 0) - (fw ? 1 : 0);
+            const moving = ix !== 0 || iz !== 0, sprint = keys.ShiftLeft || keys.ShiftRight, grounded = player.grounded, hs = hsOf();
+            if (keys.KeyC && sprint && moving && player.slide <= 0 && grounded && player.roll <= 0 && player.stun <= 0) player.slide = .5;
+            if (!grounded) player.slide = 0;
+            const sliding = player.slide > 0, rolling = player.roll > 0, stunned = player.stun > 0;
+            player.slide = Math.max(0, player.slide - dt); player.roll = Math.max(0, player.roll - dt); player.stun = Math.max(0, player.stun - dt); player.wrCool = Math.max(0, player.wrCool - dt);
+            player.crouch = keys.KeyC && !sliding && !rolling && grounded;
+            // 운동량: 달리기를 끊지 않으면 최고 속도가 점점 올라감
+            player.mom = sprint && moving && grounded && !stunned ? Math.min(1, player.mom + dt / 4) : Math.max(0, player.mom - dt * (moving ? .5 : 2));
+            player.coyote = grounded ? .12 : Math.max(0, player.coyote - dt);
+            let speed = sliding ? 22 : rolling ? 14 : (sprint ? 20 + 4 * player.mom : (moving ? 13 : 0)); if (player.crouch) speed = 5; if (stunned) speed = Math.min(speed, 5);
+            const move = MV.set(0, 0, 0); if (moving) move.copy(right).multiplyScalar(ix).addScaledVector(forward, -iz).normalize();
+            if (player.vault > 0 && player.vaultStart) {
+                player.vault = Math.max(0, player.vault - dt); const t = 1 - player.vault / .62, v = player.vaultStart;
+                player.pos.x = THREE.MathUtils.lerp(v.x, v.tx, t); player.pos.z = THREE.MathUtils.lerp(v.z, v.tz, t); player.pos.y = THREE.MathUtils.lerp(player.pos.y, v.y, Math.min(1, t * 1.7));
+                if (player.vault === 0) { player.pos.y = v.y; player.vel.set(v.vx, -1, v.vz); player.vaultStart = null }
+            } else {
+                const target = move.multiplyScalar(speed), accel = grounded ? (sliding ? 2.5 : 14) : 1.6;
+                if (grounded || moving) { player.vel.x = THREE.MathUtils.damp(player.vel.x, target.x, accel, dt); player.vel.z = THREE.MathUtils.damp(player.vel.z, target.z, accel, dt) } // 공중에서 키를 떼면 관성 유지
+                // 벽달리기: 공중에서 벽을 따라 W 를 누르면 시작, 벽달리기 중 SPACE = 월점프
+                let wall = null; if (!grounded && !stunned && !rolling) wall = wallAt(player.pos.x, player.pos.z, player.pos.y - EYE);
+                if (player.wr > 0) { if (!wall || !fw) player.wr = 0 }
+                else if (wall && fw && player.wrCool <= 0 && wall.s !== player.wrLast && hs > 6) {
+                    const dot = forward.x * -wall.nz + forward.z * wall.nx;
+                    if (Math.abs(dot) > .35) { player.wr = 1.8; player.wrLast = wall.s; player.wrDir = dot > 0 ? 1 : -1; player.wrSp = Math.max(13, Math.min(22, Math.max(hs, sprint ? 20 : 13))); player.vel.y = Math.max(player.vel.y, 2.5) }
+                }
+                if (player.wr > 0) {
+                    const tx = -wall.nz * player.wrDir, tz = wall.nx * player.wrDir; player.wr -= dt;
+                    player.vel.x = tx * player.wrSp; player.vel.z = tz * player.wrSp; player.wrSide = Math.sign(-(wall.nx * right.x + wall.nz * right.z)) || 1;
+                    if (keys.Space) { player.vel.set(wall.nx * 8 + tx * player.wrSp * .8, 9, wall.nz * 8 + tz * player.wrSp * .8); player.wr = 0; player.wrCool = .35; player.coyote = 0 }
+                }
+                if (keys.Space && player.coyote > 0 && player.wr <= 0 && !stunned) { if (!(grounded && tryVault())) { player.vel.y = 8.2; player.grounded = false; player.coyote = 0 } }
+                // 공중 난간 잡기: 점프 정점 이후 앞의 턱에 W 를 누르면 자동으로 매달려 올라감
+                if (!player.vaultStart && !player.grounded && player.wr <= 0 && !stunned && fw && player.vel.y < 1.5) tryVault(.5, .9, 2.6);
+                if (!player.vaultStart) {
+                    player.vel.y -= (player.wr > 0 ? 5 : 22) * dt;
+                    const feet = player.pos.y - EYE, wasG = player.grounded;
+                    const nx = player.pos.x + player.vel.x * dt, nz = player.pos.z + player.vel.z * dt;
+                    if (!hit(nx, player.pos.z, feet)) player.pos.x = nx; else player.vel.x = 0;
+                    if (!hit(player.pos.x, nz, feet)) player.pos.z = nz; else player.vel.z = 0;
+                    let ny = player.pos.y + player.vel.y * dt;
+                    const fl = floorAt(player.pos.x, player.pos.z, feet, player.vel.y > 0 ? .08 : STEP);
+                    if (fl && (ny - EYE <= fl.top || (wasG && player.vel.y <= 0 && feet - fl.top <= STEP))) {
+                        const impact = wasG ? 0 : -player.vel.y; ny = fl.top + EYE; player.vel.y = 0; player.grounded = true; player.wrLast = null; player.wr = 0;
+                        if (impact > 9) land(impact);
+                        if (fl.roof && Math.abs(player.pos.x - fl.x) < fl.hx - 3 && Math.abs(player.pos.z - fl.z) < fl.hz - 3) lastSafe.set(player.pos.x, ny, player.pos.z);
+                    } else player.grounded = false;
+                    player.pos.y = ny;
+                }
+            }
+            if (player.dead || player.pos.y - EYE < -50) respawn();
+            travel = Math.max(travel, Math.round(Math.hypot(player.pos.x - SPAWN.x, player.pos.z - SPAWN.z)));
+            // 카메라: 속도 FOV, 걸음 흔들림, 착지 충격, 벽달리기·스트레이프 기울임, 롤 회전
+            const sh = hsOf(), gr = player.grounded && !sliding;
+            const fv = THREE.MathUtils.damp(camera.fov, 76 + Math.min(16, sh * .55) + (sliding ? 4 : 0), 4, dt); if (Math.abs(fv - camera.fov) > .02) { camera.fov = fv; camera.updateProjectionMatrix() }
+            player.bob += dt * sh * (gr ? 1 : 0); player.dip = THREE.MathUtils.damp(player.dip, 0, 6, dt);
+            player.rz = THREE.MathUtils.damp(player.rz, player.wr > 0 ? .24 * player.wrSide : -ix * .02 * Math.min(1, sh / 13), 8, dt);
+            camera.position.copy(player.pos); camera.position.y += (gr && sh > 3 ? Math.sin(player.bob * 2.2) * .05 * Math.min(1, sh / 13) : 0) - player.dip - (player.crouch || sliding || rolling ? .55 : 0);
+            camera.rotation.order = 'YXZ'; camera.rotation.y = player.yaw; camera.rotation.x = player.pitch - (rolling ? (1 - player.roll / .55) * Math.PI * 2 : 0); camera.rotation.z = player.rz;
+            sun.target.position.set(Math.round(player.pos.x / 4) * 4, player.pos.y, Math.round(player.pos.z / 4) * 4); sun.position.copy(sun.target.position).add(SUN_OFF); ground.position.x = player.pos.x; ground.position.z = player.pos.z;
+            const mode = player.vault > 0 ? 'VAULT' : player.wr > 0 ? 'WALLRUN' : rolling ? 'ROLL' : stunned ? 'STUN' : sliding ? 'SLIDE' : player.crouch ? 'CROUCH' : !player.grounded ? 'AIR' : !moving ? 'IDLE' : sprint ? 'RUN' : 'WALK';
+            animLimbs(dt, mode, sh);
+            if ((hudT += dt) > .1) { hudT = 0; ui.speed.textContent = sh.toFixed(1); ui.mode.textContent = mode; ui.alt.textContent = Math.round(player.pos.y - EYE); ui.dist.textContent = travel; ui.chunk.textContent = lastCi + ', ' + lastCj; ui.biome.textContent = DIST[plot(lastCi, lastCj).dist].name; drawMap() } // HUD·미니맵은 초당 10회만 갱신
+        }
+        const qs = new URLSearchParams(location.search).get('seed');
+        newWorld(qs ? (/^-?\d+$/.test(qs) ? +qs : ihash(...[...qs].map(c => c.charCodeAt(0)))) : Math.random() * 2 ** 31 | 0); streamChunks(1e9);
+        function loop() { requestAnimationFrame(loop); const dt = Math.min(clock.getDelta(), .033); if (started) update(dt); renderer.render(scene, camera) } loop();
+        addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight) });
+    </script>
+</body>
+
+</html>
